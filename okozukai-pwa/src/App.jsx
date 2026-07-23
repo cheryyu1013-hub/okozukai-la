@@ -19,7 +19,7 @@ const WEEK_MS = (() => {
   catch (e) { return 7 * 24 * 60 * 60 * 1000; }
 })();
 
-const STORE_KEY = "okozukai_v9";
+const STORE_KEY = "okozukai_v11";
 const loadState = () => { try { return JSON.parse(localStorage.getItem(STORE_KEY)); } catch (e) { return null; } };
 const saveState = (s) => { try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) {} };
 
@@ -50,8 +50,8 @@ const ANIMALS = {
 };
 const LOGTYPE = {
   allowance: { label: "おこづかい", color: C.green, icon: Wallet, neg: false },
-  gift: { label: "もらった お[金|かね]", color: C.gold, icon: Gift, neg: false },
-  withdraw: { label: "[使|つか]った", color: C.coral, icon: ShoppingBag, neg: true },
+  gift: { label: "あずけた お[金|かね]", color: C.gold, icon: Gift, neg: false },
+  withdraw: { label: "[引|ひ]き[出|だ]した", color: C.coral, icon: ShoppingBag, neg: true },
   interest: { label: "[利息|りそく]（[複利|ふくり]）", color: C.violet, icon: TrendingUp, neg: false },
   animal: { label: "[動物|どうぶつ]の [稼|かせ]ぎ", color: C.teal, icon: Bird, neg: false },
   animalbuy: { label: "[動物|どうぶつ]を [買|か]った", color: C.plumSoft, icon: Bird, neg: true },
@@ -61,7 +61,18 @@ const SPEND_MEMOS = ["おかし", "おもちゃ", "ゲーム", "[本|ほん]", "
 const INCOME_MEMOS = ["おとしだま", "おばあちゃん", "おじいちゃん", "たんじょうび", "その[他|た]"];
 const GOAL_MEMOS = ["ゲーム", "おもちゃ", "ほん", "プレゼント", "じてんしゃ"];
 const PERIODS = [["毎週", 1], ["2週ごと", 2], ["1ヶ月ごと", 4]];
-const HIST_FILTERS = [["[全部|ぜんぶ]", "all"], ["[増|ふ]えた", "in"], ["[複利|ふくり]・[動物|どうぶつ]", "earn"], ["[使|つか]った", "withdraw"]];
+const RATE_TEMPLATES = [
+  { label: "銀行預金なみ", annual: 0.5, pct: 0.01, everyN: 1 },
+  { label: "ひかえめ 年3%", annual: 3, pct: 0.06, everyN: 1 },
+  { label: "一般的 年7%", annual: 7, pct: 0.13, everyN: 1 },
+  { label: "大きめ 年15%", annual: 15, pct: 0.27, everyN: 1 },
+  { label: "学習用 年50%", annual: 50, pct: 0.78, everyN: 1 },
+  { label: "たっぷり 年100%", annual: 100, pct: 1.34, everyN: 1 },
+];
+const annualFrom = (pct, everyN) => everyN > 0 ? (Math.pow(1 + pct / 100, 52 / everyN) - 1) * 100 : 0;
+const MONTHS = [["3ヶ月", 13], ["6ヶ月", 26], ["1年", 52], ["3年", 156]];
+
+const HIST_FILTERS = [["[全部|ぜんぶ]", "all"], ["[増|ふ]えた", "in"], ["[複利|ふくり]・[動物|どうぶつ]", "earn"], ["[引|ひ]き[出|だ]した", "withdraw"]];
 const matchFilter = (type, f) =>
   f === "all" ? true
     : f === "in" ? ["allowance", "gift"].includes(type)
@@ -72,6 +83,8 @@ const AFFILIATE = [
   { emoji: "🎲", title: "お金のボードゲーム", desc: "人生ゲーム・モノポリー など", url: "" },
   { emoji: "💳", title: "子ども用プリペイドカード", desc: "セブン銀行 money ring など", url: "" },
   { emoji: "🎓", title: "金融教育のオンライン講座", desc: "親子で一緒に", url: "" },
+  // こどもNISAは2027年開始予定。現時点で開設できるのは「未成年口座（課税）」です。
+  { emoji: "📈", title: "子ども名義の証券口座", desc: "楽天証券・SBI証券／こどもNISAは2027年開始予定", url: "" },
 ];
 
 // ---- pure weekly simulation (real-time catch-up) ----
@@ -164,10 +177,12 @@ export default function App() {
   const [animals, setAnimals] = useState([]);
   const [goal, setGoal] = useState(null);
   const [allowance, setAllowance] = useState({ amount: 300, everyN: 1 });
-  const [ratePct, setRatePct] = useState(5);
+  const [ratePct, setRatePct] = useState(0.78);
   const [rateEveryN, setRateEveryN] = useState(1);
   const [pin, setPin] = useState(null);
-  const [age, setAge] = useState(7);
+  const [textMode, setTextMode] = useState("kana");
+  const [showIntro, setShowIntro] = useState(true);
+  const [parentWeeks, setParentWeeks] = useState(52);
   const [startTime, setStartTime] = useState(() => Date.now());
   const [projWeeks, setProjWeeks] = useState(52);
   const [histFilter, setHistFilter] = useState("all");
@@ -177,22 +192,22 @@ export default function App() {
   const [pending, setPending] = useState(null);
   const [flash, setFlash] = useState([]);
 
-  const level = age <= 7 ? "kana" : "kanji";
+  const level = textMode;
 
   useEffect(() => {
     const d = loadState();
     if (d) {
       setWeek(d.week || 0); setBalance(d.balance || 0); setWeekly(d.weekly || [{ week: 0, balance: 0 }]);
       setLog(d.log || []); setAnimals(d.animals || []); setGoal(d.goal || null);
-      setAllowance(d.allowance || { amount: 300, everyN: 1 }); setRatePct(d.ratePct ?? 5);
-      setRateEveryN(d.rateEveryN ?? 1); setPin(d.pin || null); setAge(d.age ?? 7); setStartTime(d.startTime || Date.now());
+      setAllowance(d.allowance || { amount: 300, everyN: 1 }); setRatePct(d.ratePct ?? 0.78);
+      setRateEveryN(d.rateEveryN ?? 1); setPin(d.pin || null); setTextMode(d.textMode || "kana"); setShowIntro(d.showIntro !== false); setStartTime(d.startTime || Date.now());
     }
     setLoaded(true);
   }, []);
   useEffect(() => {
     if (!loaded) return;
-    saveState({ week, balance, weekly, log, animals, goal, allowance, ratePct, rateEveryN, pin, age, startTime });
-  }, [loaded, week, balance, weekly, log, animals, goal, allowance, ratePct, rateEveryN, pin, age, startTime]);
+    saveState({ week, balance, weekly, log, animals, goal, allowance, ratePct, rateEveryN, pin, textMode, showIntro, startTime });
+  }, [loaded, week, balance, weekly, log, animals, goal, allowance, ratePct, rateEveryN, pin, textMode, showIntro, startTime]);
 
   const totals = useMemo(() => {
     let tin = 0, grown = 0, out = 0;
@@ -216,6 +231,17 @@ export default function App() {
   const oneYear = useMemo(() => project(balance, 52, ratePct, rateEveryN, allowance, animalNetWeekly, week), [balance, ratePct, rateEveryN, allowance, animalNetWeekly, week]);
   const gainPerWeek = (allowance.everyN > 0 ? allowance.amount / allowance.everyN : 0) + Math.max(0, animalNetWeekly) + (rateEveryN > 0 ? balance * ratePct / 100 / rateEveryN : 0);
   const weeksToGoal = goal && balance < goal.amount && gainPerWeek > 0 ? Math.ceil((goal.amount - balance) / gainPerWeek) : null;
+
+  const parentProj = useMemo(() => {
+    const total = project(balance, parentWeeks, ratePct, rateEveryN, allowance, 0, week);
+    let added = 0;
+    for (let i = 1; i <= parentWeeks; i++) {
+      const wk = week + i;
+      if (allowance.everyN > 0 && wk % allowance.everyN === 0) added += allowance.amount;
+    }
+    const principal = balance + added;
+    return { total, principal, interest: Math.max(0, total - principal) };
+  }, [balance, parentWeeks, ratePct, rateEveryN, allowance, week]);
 
   function addLog(type, amount, memo) { setLog((p) => [...p, { id: uid(), week, type, amount, memo }]); }
 
@@ -287,7 +313,7 @@ export default function App() {
     <LevelCtx.Provider value={level}>
     <div style={{ minHeight: "100vh", background: "linear-gradient(160deg,#F3F1FF 0%,#EAF7F1 100%)", color: C.plum, fontFamily: "'M PLUS Rounded 1c',sans-serif", padding: "16px 16px 96px" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&family=Zen+Maru+Gothic:wght@500;700;900&family=Baloo+2:wght@600;800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&family=Zen+Maru+Gothic:wght@500;700;900&display=swap');
         button:focus-visible{outline:3px solid ${C.plum};outline-offset:2px}
         ruby{ruby-align:center}
         rt{font-size:.52em;font-weight:700;color:${C.plumSoft};transform:translateY(1px)}
@@ -308,13 +334,52 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 10, color: C.plumSoft, fontWeight: 700 }}>{week === 0 ? "スタート" : <T s={`${week}[週目|しゅうめ]`} />}</div>
-              <div style={{ fontFamily: "'Baloo 2',sans-serif", fontWeight: 800, fontSize: 15, color: C.plum }}>{yen(balance)}</div>
+              <div style={{ fontFamily: "'M PLUS Rounded 1c',sans-serif", fontWeight: 800, fontSize: 15, color: C.plum }}>{yen(balance)}</div>
             </div>
+            <button onClick={() => setShowIntro(true)} aria-label="アプリについて" style={{ border: "none", borderRadius: 14, padding: "8px 11px", background: "#fff", color: C.plumSoft, boxShadow: "0 4px 12px rgba(58,46,92,.12)", cursor: "pointer", fontFamily: "'Zen Maru Gothic',sans-serif", fontWeight: 800, fontSize: 13 }}>？</button>
             <button onClick={tapParent} style={{ border: "none", borderRadius: 14, padding: "8px 11px", background: parentUnlocked ? C.plum : "#fff", color: parentUnlocked ? "#fff" : C.plum, boxShadow: "0 4px 12px rgba(58,46,92,.12)", cursor: "pointer", fontFamily: "'Zen Maru Gothic',sans-serif", fontWeight: 700, fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}>
               {parentUnlocked ? <Unlock size={15} /> : <Lock size={15} />}親
             </button>
           </div>
         </div>
+
+        {!parentUnlocked && tab === "save" && showIntro && (
+          <div style={{ background: "linear-gradient(135deg,#FFFFFF,#F4F1FF)", borderRadius: 24, padding: "18px 18px 16px", marginBottom: 14, boxShadow: "0 12px 34px rgba(58,46,92,.10)", border: `1px solid ${C.violet}22` }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+              <span style={{ fontSize: 26, lineHeight: 1 }}>🌱</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontFamily: "'Zen Maru Gothic',sans-serif", fontWeight: 900, fontSize: 17.5, lineHeight: 1.45 }}>
+                  <T s="[預|あず]けて [増|ふ]やす [練習|れんしゅう]" />
+                </div>
+              </div>
+              <button onClick={() => setShowIntro(false)} aria-label="閉じる" style={{ border: "none", background: "#fff", borderRadius: 10, width: 30, height: 30, cursor: "pointer", color: C.plumSoft, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 2px 6px rgba(0,0,0,.06)" }}><X size={16} /></button>
+            </div>
+
+            <div style={{ fontSize: 13, lineHeight: 1.9, color: C.plum, fontWeight: 500 }}>
+              <T s="おこづかいや もらったお[金|かね]を [親|おや]に[預|あず]けるよ。" /><br />
+              <T s="[利息|りそく]で[増|ふ]えたり、[動物|どうぶつ]を[育|そだ]てて かせいだり してみよう。" />
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+              {[["1", "あずける", C.green], ["2", "ふやす", C.violet], ["3", "ひきだす", C.coral]].map(([n, t, col]) => (
+                <div key={n} style={{ flex: 1, background: "#fff", borderRadius: 14, padding: "10px 8px", textAlign: "center", border: "1px solid #EFEEF7" }}>
+                  <div style={{ width: 22, height: 22, borderRadius: "50%", background: col, color: "#fff", fontWeight: 800, fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 5px" }}>{n}</div>
+                  <div style={{ fontWeight: 800, fontSize: 12.5 }}>{t}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginTop: 14, padding: "11px 12px", borderRadius: 12, background: "#fff", border: `1px dashed ${C.plum}33` }}>
+              <div style={{ fontSize: 11.5, color: C.plumSoft, fontWeight: 700, lineHeight: 1.7, marginBottom: 8 }}>
+                おうちの方へ：はじめに おこづかい・利息を設定してください。
+              </div>
+              <button onClick={() => { setShowIntro(false); tapParent(); }} style={{ width: "100%", border: "none", borderRadius: 12, padding: 11, background: C.violet, color: "#fff", fontFamily: "'Zen Maru Gothic',sans-serif", fontWeight: 700, fontSize: 13.5, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <Lock size={15} />設定をひらく（親）
+              </button>
+            </div>
+            <button onClick={() => setShowIntro(false)} style={{ width: "100%", border: "none", borderRadius: 14, padding: 12, marginTop: 10, background: C.plum, color: "#fff", fontFamily: "'Zen Maru Gothic',sans-serif", fontWeight: 700, fontSize: 14.5, cursor: "pointer" }}><T s="はじめる" /></button>
+          </div>
+        )}
 
         {parentUnlocked && (
           <div style={{ background: "#FBFAFF", border: `2px solid ${C.plum}22`, borderRadius: 22, padding: 16, marginBottom: 14 }}>
@@ -324,12 +389,14 @@ export default function App() {
               <button onClick={() => setParentUnlocked(false)} style={{ border: "none", background: "#fff", borderRadius: 10, padding: "6px 12px", fontWeight: 700, color: C.plum, cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,.06)" }}>ロック</button>
             </div>
 
-            <PanelLabel>子どもの年齢</PanelLabel>
-            <Row><StepBtn onClick={() => setAge((a) => Math.max(4, a - 1))}><Minus size={18} /></StepBtn>
-              <Big>{age}さい</Big>
-              <StepBtn onClick={() => setAge((a) => Math.min(12, a + 1))}><Plus size={18} /></StepBtn></Row>
-            <div style={{ fontSize: 11.5, color: C.plumSoft, fontWeight: 700, marginBottom: 16, marginTop: -4 }}>
-              {level === "kana" ? "→ すべてひらがなで表示" : "→ 漢字＋ふりがなで表示"}
+            <PanelLabel>文字の表示</PanelLabel>
+            <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+              {[["ひらがな", "kana"], ["漢字（ふりがな付き）", "kanji"]].map(([lb, v]) => (
+                <button key={v} onClick={() => setTextMode(v)} style={{ flex: 1, border: textMode === v ? `2px solid ${C.green}` : "2px solid #EDECF5", background: textMode === v ? C.green + "14" : "#fff", color: C.plum, borderRadius: 12, padding: "10px 4px", fontWeight: 700, cursor: "pointer", fontSize: 12.5 }}>{lb}</button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: C.plumSoft, fontWeight: 500, marginBottom: 18 }}>
+              未就学〜小1くらいは「ひらがな」、小2以上は「漢字」がおすすめです。
             </div>
 
             <PanelLabel>1回のおこづかい（金額）</PanelLabel>
@@ -338,14 +405,76 @@ export default function App() {
               <StepBtn onClick={() => setAllowance((a) => ({ ...a, amount: a.amount + 50 }))}><Plus size={18} /></StepBtn></Row>
             <PanelLabel>おこづかいの周期</PanelLabel>
             <Segmented value={allowance.everyN} onChange={(n) => setAllowance((a) => ({ ...a, everyN: n }))} />
-            <div style={{ height: 14 }} />
-            <PanelLabel>利息（複利）の大きさ</PanelLabel>
-            <Row><StepBtn onClick={() => setRatePct((r) => Math.max(0, r - 1))}><Minus size={18} /></StepBtn>
+
+            <div style={{ height: 20 }} />
+            <PanelLabel>利息（複利）のテンプレート</PanelLabel>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+              {RATE_TEMPLATES.map((t) => {
+                const on = Math.abs(ratePct - t.pct) < 0.001 && rateEveryN === t.everyN;
+                return <button key={t.label} onClick={() => { setRatePct(t.pct); setRateEveryN(t.everyN); }}
+                  style={{ border: on ? `2px solid ${C.violet}` : "2px solid #EDECF5", background: on ? C.violet + "12" : "#fff", color: C.plum, borderRadius: 999, padding: "7px 12px", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>{t.label}</button>;
+              })}
+            </div>
+            <div style={{ background: "#fff", borderRadius: 14, padding: "12px 14px", marginBottom: 12, fontSize: 11.5, lineHeight: 1.8, color: C.plumSoft, fontWeight: 500 }}>
+              <b style={{ color: C.plum }}>どれくらいが目安？</b><br />
+              銀行の普通預金は年0.2〜0.5%ほど。世界株の代表的な指数（S&P500など）の長期平均は<b style={{ color: C.plum }}>年7%前後</b>とよく言われます。
+              テンプレートは<b style={{ color: C.plum }}>毎週</b>利息がつく設定です（週ごとの方がお子さまは変化を実感しやすいため）。<br />
+              <span style={{ color: C.coralDark }}>※ 利息は1円未満が切り捨てになります。</span>残高が少ないうちは利息が0円のままになることがあるので、
+              最初は<b style={{ color: C.plum }}>「学習用」以上</b>から始め、慣れてきたら<b style={{ color: C.plum }}>年7%</b>に近づけるのがおすすめです。
+            </div>
+
+            <PanelLabel>利息の大きさ（細かく調整）</PanelLabel>
+            <Row><StepBtn onClick={() => setRatePct((r) => Math.max(0, Math.round((r - 0.05) * 100) / 100))}><Minus size={18} /></StepBtn>
               <Big>{ratePct}%</Big>
-              <StepBtn onClick={() => setRatePct((r) => Math.min(15, r + 1))}><Plus size={18} /></StepBtn></Row>
+              <StepBtn onClick={() => setRatePct((r) => Math.min(20, Math.round((r + 0.05) * 100) / 100))}><Plus size={18} /></StepBtn></Row>
             <PanelLabel>利息の周期</PanelLabel>
             <Segmented value={rateEveryN} onChange={setRateEveryN} />
-            <div style={{ height: 18 }} />
+            <div style={{ marginTop: 8, marginBottom: 18, textAlign: "center", fontSize: 12.5, fontWeight: 700, color: C.violet }}>
+              年利にすると 約{annualFrom(ratePct, rateEveryN).toFixed(1)}%
+            </div>
+            {Math.round(balance * ratePct / 100) < 1 && ratePct > 0 && (
+              <div style={{ marginTop: -10, marginBottom: 18, padding: "10px 12px", borderRadius: 12, background: C.coral + "12", color: C.coralDark, fontSize: 11.5, fontWeight: 700, lineHeight: 1.7 }}>
+                今の残高（{yen(balance)}）だと利息が0円のままです。残高が {yen(Math.ceil(0.5 / (ratePct / 100)))} 以上になるか、利息を大きくすると増え始めます。
+              </div>
+            )}
+
+            <PanelLabel>この設定だと、どれくらい増える？</PanelLabel>
+            <div style={{ background: "#fff", borderRadius: 16, padding: 14, marginBottom: 18 }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                {MONTHS.map(([lb, wk]) => (
+                  <button key={wk} onClick={() => setParentWeeks(wk)} style={{ flex: 1, border: parentWeeks === wk ? `2px solid ${C.violet}` : "2px solid #EDECF5", background: parentWeeks === wk ? C.violet + "12" : "#fff", color: C.plum, borderRadius: 10, padding: "8px 2px", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>{lb}</button>
+                ))}
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 11.5, color: C.plumSoft, fontWeight: 700 }}>今の残高 {yen(balance)} からの予想</div>
+                <div style={{ fontFamily: "'M PLUS Rounded 1c',sans-serif", fontWeight: 800, fontSize: 30, color: C.greenDark, margin: "2px 0" }}>{yen(parentProj.total)}</div>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <div style={{ flex: 1, background: "#FBFBFF", borderRadius: 12, padding: "8px 4px", textAlign: "center", border: "1px solid #EFEEF7" }}>
+                  <div style={{ fontSize: 10.5, color: C.plumSoft, fontWeight: 700 }}>預けた合計</div>
+                  <div style={{ fontWeight: 800, fontSize: 14 }}>{yen(parentProj.principal)}</div>
+                </div>
+                <div style={{ flex: 1, background: "#FBFBFF", borderRadius: 12, padding: "8px 4px", textAlign: "center", border: "1px solid #EFEEF7" }}>
+                  <div style={{ fontSize: 10.5, color: C.plumSoft, fontWeight: 700 }}>利息で増えた分</div>
+                  <div style={{ fontWeight: 800, fontSize: 14, color: C.violet }}>+{yen(parentProj.interest)}</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 10.5, color: C.plumSoft, marginTop: 8, lineHeight: 1.6 }}>
+                ※ おこづかいと利息のみで計算（動物の収入や使ったお金は含みません）。実際にお子さまへ渡す金額の目安にしてください。
+              </div>
+            </div>
+
+            <button onClick={() => { setPending(null); setModal("pinCreate"); }} style={{ width: "100%", border: "none", background: "transparent", color: C.plumSoft, fontWeight: 700, fontSize: 12.5, padding: 8, marginTop: 4, marginBottom: 10, cursor: "pointer" }}>パスワードを変更</button>
+
+            <PanelLabel>このアプリについて</PanelLabel>
+            <div style={{ background: "#fff", borderRadius: 16, padding: "14px 16px", marginBottom: 18, fontSize: 12, lineHeight: 1.9, color: C.plum, fontWeight: 500 }}>
+              <b>コンセプト：預けて増やす練習</b><br />
+              おこづかいやもらったお金を、お子さまが親に預けます。親が銀行・証券会社の役割を担い、預かったお金に利息（複利）をつけます。<br /><br />
+              子どもは「そのまま複利で増やす」か「動物を買って育て、稼いでもらう」かを自分で選びます。使いたくなったら、親の承認を受けて引き出します。<br /><br />
+              ねらいは、<b>複利でお金が増える感覚</b>と、<b>お金を働かせて利益を得る感覚</b>を、遊びながら体で覚えることです。<br /><br />
+              <span style={{ color: C.plumSoft }}>※ 実際のお金は親が預かり、アプリは計算と記録のみを行います。送金・投資などの金融取引は一切行いません。</span>
+            </div>
+
             <PanelLabel>おうちの方へ（おすすめ）</PanelLabel>
             {AFFILIATE.map((a) => (
               <div key={a.title} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 14, padding: "10px 12px", marginBottom: 8, boxShadow: "0 2px 8px rgba(58,46,92,.05)" }}>
@@ -358,20 +487,20 @@ export default function App() {
               </div>
             ))}
             <div style={{ fontSize: 10.5, color: C.plumSoft, fontWeight: 700, marginBottom: 6 }}>※ 親向けのおすすめリンク（アフィリエイト）</div>
-            <button onClick={() => { setPending(null); setModal("pinCreate"); }} style={{ width: "100%", border: "none", background: "transparent", color: C.plumSoft, fontWeight: 700, fontSize: 12.5, padding: 8, marginTop: 4, cursor: "pointer" }}>パスワードを変更</button>
+
           </div>
         )}
 
-        {tab === "save" && (
+        {!parentUnlocked && tab === "save" && (
           <>
             <div style={{ background: C.paper, borderRadius: 28, padding: "14px 18px 18px", boxShadow: "0 14px 40px rgba(58,46,92,.10)", textAlign: "center" }}>
               <div style={{ height: 180, margin: "-2px auto 0", maxWidth: 210 }}><Jar fillPct={fillPct} growth={growth} magic={magic} /></div>
               <div style={{ fontSize: 13, color: C.plumSoft, fontWeight: 700, marginTop: -6 }}><T s="[今|いま]の お[金|かね]" /></div>
-              <div style={{ fontFamily: "'Baloo 2','Zen Maru Gothic',sans-serif", fontWeight: 800, fontSize: 44, lineHeight: 1.05, letterSpacing: -1 }}>{yen(shownBal)}</div>
+              <div style={{ fontFamily: "'M PLUS Rounded 1c',sans-serif", fontWeight: 800, fontSize: 44, lineHeight: 1.05, letterSpacing: -1 }}>{yen(shownBal)}</div>
               <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <Stat label={<T s="[入|い]れた" />} value={yen(totals.tin)} color={C.green} />
+                <Stat label={<T s="あずけた" />} value={yen(totals.tin)} color={C.green} />
                 <Stat label={<T s="[増|ふ]えた" />} value={yen(totals.grown)} color={C.violet} />
-                <Stat label={<T s="[使|つか]った" />} value={yen(totals.out)} color={C.coral} />
+                <Stat label={<T s="[引|ひ]き[出|だ]した" />} value={yen(totals.out)} color={C.coral} />
               </div>
               <div style={{ marginTop: 12, background: magic ? "#FFF6E2" : C.sky, color: magic ? "#8A5A00" : C.plum, borderRadius: 16, padding: "10px 12px", fontWeight: 700, fontSize: 13.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                 {magic && <Sparkles size={16} />}<T s={insight} />
@@ -385,7 +514,7 @@ export default function App() {
                   <div style={{ fontSize: 12, color: C.plumSoft, fontWeight: 700, flex: 1 }}><T s="なんのために [貯|た]める？" /></div>
                   <button onClick={() => setModal("goal")} style={{ border: "none", background: "transparent", color: C.plumSoft, fontWeight: 700, fontSize: 12, cursor: "pointer" }}><T s="[変|か]える" /></button>
                 </div>
-                <div style={{ fontFamily: "'Zen Maru Gothic',sans-serif", fontWeight: 900, fontSize: 19, marginBottom: 10 }}><T s={goal.purpose} /> <span style={{ fontFamily: "'Baloo 2',sans-serif", color: C.plumSoft, fontSize: 15 }}>{yen(goal.amount)}</span></div>
+                <div style={{ fontFamily: "'Zen Maru Gothic',sans-serif", fontWeight: 900, fontSize: 19, marginBottom: 10 }}><T s={goal.purpose} /> <span style={{ fontFamily: "'M PLUS Rounded 1c',sans-serif", color: C.plumSoft, fontSize: 15 }}>{yen(goal.amount)}</span></div>
                 <div style={{ height: 16, borderRadius: 999, background: "#EEEDF6", overflow: "hidden" }}>
                   <div style={{ height: "100%", width: `${Math.min(100, (balance / goal.amount) * 100)}%`, background: `linear-gradient(90deg,${C.green},${C.gold})`, borderRadius: 999, transition: "width .6s" }} />
                 </div>
@@ -400,10 +529,10 @@ export default function App() {
             )}
 
             <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-              <button onClick={() => setModal("spend")} style={actBtn(C.coral)}><ShoppingBag size={17} /><T s="[使|つか]う" /></button>
-              <button onClick={() => setModal("income")} style={actBtn(C.gold)}><Gift size={17} />もらう</button>
+              <button onClick={() => setModal("spend")} style={actBtn(C.coral)}><ShoppingBag size={17} /><T s="[引|ひ]き[出|だ]す" /></button>
+              <button onClick={() => setModal("income")} style={actBtn(C.gold)}><Gift size={17} /><T s="あずける" /></button>
             </div>
-            <div style={{ fontSize: 11, color: C.plumSoft, fontWeight: 700, textAlign: "center", marginTop: 8 }}><T s="「[使|つか]う」「もらう」は [親|おや]の パスワードが いるよ" /></div>
+            <div style={{ fontSize: 11, color: C.plumSoft, fontWeight: 700, textAlign: "center", marginTop: 8 }}><T s="「[引|ひ]き[出|だ]す」「あずける」は [親|おや]の パスワードが いるよ" /></div>
 
             <div style={{ background: C.paper, borderRadius: 22, padding: 16, marginTop: 14, boxShadow: "0 10px 30px rgba(58,46,92,.08)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
@@ -412,22 +541,30 @@ export default function App() {
               </div>
               <div style={{ fontSize: 12, color: C.plumSoft, fontWeight: 700, marginBottom: 14 }}><T s="[今|いま]の お[金|かね]が [複利|ふくり]で どれくらい [増|ふ]えるかな？" /></div>
               <div style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 13, color: C.plumSoft, fontWeight: 700 }}><T s={`${projWeeks}[週|しゅう][後|ご]は やく`} /></div>
-                <div style={{ fontFamily: "'Baloo 2',sans-serif", fontWeight: 800, fontSize: 38, color: C.greenDark, letterSpacing: -1 }}>{yen(projNow)}</div>
+                <div style={{ fontSize: 13, color: C.plumSoft, fontWeight: 700 }}><T s={`${projWeeks}[週|しゅう][後|ご]は`} /></div>
+                <div style={{ fontFamily: "'M PLUS Rounded 1c',sans-serif", fontWeight: 800, fontSize: 38, color: C.greenDark, letterSpacing: -1 }}>{yen(projNow)}</div>
+                <div style={{ fontSize: 13.5, color: C.greenDark, fontWeight: 700, marginTop: -2 }}><T s="に [増|ふ]えるよ" /></div>
               </div>
               <input type="range" min={1} max={52} value={projWeeks} onChange={(e) => setProjWeeks(Number(e.target.value))} aria-label="week" style={{ width: "100%", accentColor: C.violet, marginTop: 8 }} />
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.plumSoft, fontWeight: 700 }}><span><T s="1[週|しゅう][後|ご]" /></span><span><T s="52[週|しゅう][後|ご]" /></span></div>
               <div style={{ marginTop: 12, background: C.sky, borderRadius: 14, padding: "11px 12px", textAlign: "center", fontWeight: 700, fontSize: 14 }}>
-                <T s="1[年|ねん][後|ご]（52[週|しゅう]）は やく " /><span style={{ fontFamily: "'Baloo 2',sans-serif", color: C.violet, fontSize: 18 }}>{yen(oneYear)}</span>
+                <T s="1[年|ねん][後|ご]（52[週|しゅう]）は " /><span style={{ fontFamily: "'M PLUS Rounded 1c',sans-serif", color: C.violet, fontSize: 18 }}>{yen(oneYear)}</span><T s=" に [増|ふ]えるよ" />
               </div>
               <div style={{ fontSize: 10.5, color: C.plumSoft, fontWeight: 700, textAlign: "center", marginTop: 8 }}><T s="※ [今|いま]の おこづかい・[利息|りそく]・[動物|どうぶつ]で [計算|けいさん]" /></div>
             </div>
 
             <button onClick={resetAll} style={{ width: "100%", border: "none", background: "transparent", color: C.plumSoft, fontWeight: 700, fontSize: 12, padding: 12, marginTop: 8, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5 }}><RotateCcw size={14} /><T s="[最初|さいしょ]から やり[直|なお]す" /></button>
+
+            <div style={{ marginTop: 4, padding: "14px 16px", borderRadius: 16, background: "rgba(255,255,255,.6)", fontSize: 10.5, lineHeight: 1.75, color: C.plumSoft, fontWeight: 500 }}>
+              本アプリは、お金の仕組みを学ぶための学習用シミュレーションです。実際の預金・送金・投資・金融取引は一切行いません。
+              表示される金額や利息は、保護者が設定した数値にもとづく計算結果であり、実在の金融商品の利回りを示すものではありません。
+              記録はお使いの端末内にのみ保存され、外部への送信は行いません（履歴やサイトデータを削除すると記録も消えます）。
+              なお、保護者向け画面にはアフィリエイト広告を含むリンクを掲載しています。
+            </div>
           </>
         )}
 
-        {tab === "animals" && (
+        {!parentUnlocked && tab === "animals" && (
           <>
             <IntroCard color={C.teal} icon={Bird} title={<T s="[動物|どうぶつ]は [働|はたら]いて お[金|かね]を くれる" />}>
               <T s="[動物|どうぶつ]は [毎週|まいしゅう] お[金|かね]を くれるよ。1[週間|しゅうかん] [経|た]つと ハートが 1つ [減|へ]る。ご[飯|はん]を あげると ハートが [増|ふ]える。ハートが なくなると、おなかが [減|へ]って いなくなっちゃう！" />
@@ -435,7 +572,7 @@ export default function App() {
 
             <div style={{ background: C.paper, borderRadius: 20, padding: "14px 16px", marginTop: 12, boxShadow: "0 10px 30px rgba(58,46,92,.08)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div><div style={{ fontSize: 12, color: C.plumSoft, fontWeight: 700 }}><T s="[毎週|まいしゅう] もらえる お[金|かね]" /></div>
-                <div style={{ fontFamily: "'Baloo 2',sans-serif", fontWeight: 800, fontSize: 24, color: C.teal }}>+{yen(weeklyAnimalIncome)}</div></div>
+                <div style={{ fontFamily: "'M PLUS Rounded 1c',sans-serif", fontWeight: 800, fontSize: 24, color: C.teal }}>+{yen(weeklyAnimalIncome)}</div></div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 26 }}>{animals.length ? animals.map((a) => ANIMALS[a.key].emoji).slice(0, 5).join("") : "🌱"}</div>
                 <div style={{ fontSize: 11, color: C.plumSoft, fontWeight: 700 }}>{animals.length} / {MAX_ANIMALS} <T s="[匹|ひき]" /></div>
@@ -460,7 +597,7 @@ export default function App() {
                         </div>
                         <button onClick={() => feedAnimal(a.id)} disabled={!canFeed} style={{ border: "none", borderRadius: 12, padding: "9px 12px", background: !canFeed ? "#EEE" : (hungry ? C.coral : C.violet + "1A"), color: !canFeed ? "#AAA" : (hungry ? "#fff" : C.violet), fontWeight: 700, cursor: !canFeed ? "default" : "pointer", fontSize: 12, display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1.2 }}>
                           <span style={{ display: "flex", alignItems: "center", gap: 3 }}><Heart size={13} />{full ? <T s="[満腹|まんぷく]" /> : <T s="ご[飯|はん]" />}</span>
-                          {!full && <span style={{ fontFamily: "'Baloo 2',sans-serif", fontSize: 12 }}>{yen(d.feed)}</span>}
+                          {!full && <span style={{ fontFamily: "'M PLUS Rounded 1c',sans-serif", fontSize: 12 }}>{yen(d.feed)}</span>}
                         </button>
                       </div>
                     );
@@ -481,7 +618,7 @@ export default function App() {
                         <div style={{ fontWeight: 700, fontSize: 15 }}>{d.name}</div>
                         <div style={{ fontSize: 11.5, color: C.plumSoft, fontWeight: 700 }}><T s="[毎週|まいしゅう]" /> +{yen(d.income)}・<T s="ご[飯|はん]" /> {yen(d.feed)}</div>
                       </div>
-                      <button onClick={() => buyAnimal(k)} disabled={!canBuy} style={{ border: "none", borderRadius: 12, padding: "9px 14px", background: !canBuy ? "#EEE" : C.teal, color: !canBuy ? "#AAA" : "#fff", fontWeight: 700, cursor: !canBuy ? "default" : "pointer", fontFamily: "'Baloo 2',sans-serif", fontSize: 14 }}>{yen(d.cost)}</button>
+                      <button onClick={() => buyAnimal(k)} disabled={!canBuy} style={{ border: "none", borderRadius: 12, padding: "9px 14px", background: !canBuy ? "#EEE" : C.teal, color: !canBuy ? "#AAA" : "#fff", fontWeight: 700, cursor: !canBuy ? "default" : "pointer", fontFamily: "'M PLUS Rounded 1c',sans-serif", fontSize: 14 }}>{yen(d.cost)}</button>
                     </div>
                   );
                 })}
@@ -490,16 +627,16 @@ export default function App() {
           </>
         )}
 
-        {tab === "history" && (
+        {!parentUnlocked && tab === "history" && (
           <>
             <IntroCard color={C.violet} icon={ScrollText} title={<T s="[積|つ]み[立|た]て [履歴|りれき]" />}>
-              <T s="これまでの お[金|かね]の [動|うご]きを [全部|ぜんぶ] [見|み]られるよ。おこづかい・[利息|りそく]・[動物|どうぶつ]・[使|つか]ったお[金|かね]の [記録|きろく]。" />
+              <T s="これまでの お[金|かね]の [動|うご]きを [全部|ぜんぶ] [見|み]られるよ。おこづかい・[利息|りそく]・[動物|どうぶつ]・[引|ひ]き[出|だ]した お[金|かね]の [記録|きろく]。" />
             </IntroCard>
 
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <Stat label={<T s="[入|い]れた" />} value={yen(totals.tin)} color={C.green} />
+              <Stat label={<T s="あずけた" />} value={yen(totals.tin)} color={C.green} />
               <Stat label={<T s="[増|ふ]えた" />} value={yen(totals.grown)} color={C.violet} />
-              <Stat label={<T s="[使|つか]った" />} value={yen(totals.out)} color={C.coral} />
+              <Stat label={<T s="[引|ひ]き[出|だ]した" />} value={yen(totals.out)} color={C.coral} />
             </div>
 
             <SectionCard title={<T s="お[金|かね]の [育|そだ]ちかた" />}>
@@ -534,7 +671,7 @@ export default function App() {
                             <div style={{ fontWeight: 700, fontSize: 14 }}><T s={e.memo || m.label} /></div>
                             <div style={{ fontSize: 11, color: C.plumSoft, fontWeight: 700 }}><T s={`${e.week}[週目|しゅうめ]`} /></div>
                           </div>
-                          <div style={{ fontFamily: "'Baloo 2',sans-serif", fontWeight: 800, fontSize: 15, color: m.neg ? C.coralDark : C.greenDark }}>{m.neg ? "−" : "+"}{yen(e.amount).slice(1)}</div>
+                          <div style={{ fontFamily: "'M PLUS Rounded 1c',sans-serif", fontWeight: 800, fontSize: 15, color: m.neg ? C.coralDark : C.greenDark }}>{m.neg ? "−" : "+"}{yen(e.amount).slice(1)}</div>
                         </div>
                       );
                     })}
@@ -552,6 +689,7 @@ export default function App() {
         </div>
       )}
 
+      {!parentUnlocked && (
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(255,255,255,.92)", backdropFilter: "blur(8px)", borderTop: "1px solid #ECEAF6", display: "flex", justifyContent: "center", padding: "8px 8px calc(8px + env(safe-area-inset-bottom))", zIndex: 40 }}>
         <div style={{ display: "flex", gap: 6, maxWidth: 460, width: "100%" }}>
           {TABS.map((t) => { const Icon = t.icon; const on = tab === t.k;
@@ -559,9 +697,10 @@ export default function App() {
           })}
         </div>
       </div>
+      )}
 
-      {modal === "spend" && <EntrySheet title={<T s="[使|つか]う" />} color={C.coral} presets={[100, 300, 500, 1000]} memos={SPEND_MEMOS} max={balance} confirmLabel={<T s="[親|おや]に かくにん" />} onClose={() => setModal(null)} onCommit={(a, m) => { setModal(null); requirePin({ kind: "withdraw", amount: a, memo: m || "[使|つか]った" }); }} />}
-      {modal === "income" && <EntrySheet title={<T s="お[金|かね]を もらう" />} color={C.gold} presets={[500, 1000, 3000, 5000]} memos={INCOME_MEMOS} confirmLabel={<T s="[親|おや]に かくにん" />} onClose={() => setModal(null)} onCommit={(a, m) => { setModal(null); requirePin({ kind: "gift", amount: a, memo: m || "もらった お[金|かね]" }); }} />}
+      {modal === "spend" && <EntrySheet title={<T s="[引|ひ]き[出|だ]す" />} color={C.coral} presets={[100, 300, 500, 1000]} memos={SPEND_MEMOS} max={balance} confirmLabel={<T s="[親|おや]に かくにん" />} onClose={() => setModal(null)} onCommit={(a, m) => { setModal(null); requirePin({ kind: "withdraw", amount: a, memo: m || "[引|ひ]き[出|だ]した" }); }} />}
+      {modal === "income" && <EntrySheet title={<T s="お[金|かね]を あずける" />} color={C.gold} presets={[500, 1000, 3000, 5000]} memos={INCOME_MEMOS} confirmLabel={<T s="[親|おや]に かくにん" />} onClose={() => setModal(null)} onCommit={(a, m) => { setModal(null); requirePin({ kind: "gift", amount: a, memo: m || "あずけた お[金|かね]" }); }} />}
       {modal === "goal" && <GoalSheet current={goal} onClose={() => setModal(null)} onSave={(g) => { setGoal(g); setModal(null); }} onClear={() => { setGoal(null); setModal(null); }} />}
       {(modal === "pinCreate" || modal === "pinEnter") && <PinPad mode={modal === "pinCreate" ? "create" : "enter"} expect={pin} onClose={() => { setModal(null); setPending(null); }} onDone={onPinDone} />}
     </div>
@@ -578,11 +717,11 @@ function Segmented({ value, onChange }) {
 function Stat({ label, value, color }) {
   return <div style={{ flex: 1, background: "#FBFBFF", borderRadius: 14, padding: "9px 4px", border: "1px solid #EFEEF7" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 11, color: C.plumSoft, fontWeight: 700 }}><span style={{ width: 8, height: 8, borderRadius: 3, background: color }} />{label}</div>
-    <div style={{ fontFamily: "'Baloo 2',sans-serif", fontWeight: 800, fontSize: 15, marginTop: 2 }}>{value}</div>
+    <div style={{ fontFamily: "'M PLUS Rounded 1c',sans-serif", fontWeight: 800, fontSize: 15, marginTop: 2 }}>{value}</div>
   </div>;
 }
 function StepBtn({ children, onClick }) { return <button onClick={onClick} style={{ width: 44, height: 44, borderRadius: 12, border: "none", background: C.sky, color: C.plum, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>{children}</button>; }
-function Big({ children }) { return <div style={{ flex: 1, textAlign: "center", fontFamily: "'Baloo 2','Zen Maru Gothic',sans-serif", fontWeight: 800, fontSize: 22 }}>{children}</div>; }
+function Big({ children }) { return <div style={{ flex: 1, textAlign: "center", fontFamily: "'M PLUS Rounded 1c',sans-serif", fontWeight: 800, fontSize: 22 }}>{children}</div>; }
 function Row({ children }) { return <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>{children}</div>; }
 function PanelLabel({ children }) { return <div style={{ fontSize: 12, color: C.plumSoft, fontWeight: 700, marginBottom: 6 }}>{children}</div>; }
 function SectionCard({ title, children }) {
@@ -614,11 +753,11 @@ function EntrySheet({ title, color, presets, memos, max, confirmLabel, onClose, 
     </div>
     <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "center", marginBottom: 12 }}>
       <StepBtn onClick={() => setAmount((a) => Math.max(0, a - 50))}><Minus size={20} /></StepBtn>
-      <input type="number" value={amount} min={0} onChange={(e) => setAmount(Math.max(0, Number(e.target.value) || 0))} style={{ width: 150, textAlign: "center", border: "none", borderBottom: `3px solid ${color}`, fontFamily: "'Baloo 2',sans-serif", fontWeight: 800, fontSize: 34, color: C.plum, background: "transparent", outline: "none", padding: "2px 0" }} />
+      <input type="number" value={amount} min={0} onChange={(e) => setAmount(Math.max(0, Number(e.target.value) || 0))} style={{ width: 150, textAlign: "center", border: "none", borderBottom: `3px solid ${color}`, fontFamily: "'M PLUS Rounded 1c',sans-serif", fontWeight: 800, fontSize: 34, color: C.plum, background: "transparent", outline: "none", padding: "2px 0" }} />
       <StepBtn onClick={() => setAmount((a) => a + 50)}><Plus size={20} /></StepBtn>
     </div>
     <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 14 }}>
-      {presets.map((p) => <button key={p} onClick={() => setAmount(p)} style={{ border: amount === p ? `2px solid ${color}` : "2px solid #EDECF5", background: amount === p ? color + "14" : "#fff", color: C.plum, borderRadius: 12, padding: "8px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "'Baloo 2',sans-serif", fontSize: 15 }}>¥{p.toLocaleString("ja-JP")}</button>)}
+      {presets.map((p) => <button key={p} onClick={() => setAmount(p)} style={{ border: amount === p ? `2px solid ${color}` : "2px solid #EDECF5", background: amount === p ? color + "14" : "#fff", color: C.plum, borderRadius: 12, padding: "8px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "'M PLUS Rounded 1c',sans-serif", fontSize: 15 }}>¥{p.toLocaleString("ja-JP")}</button>)}
     </div>
     {memos && <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 16 }}>
       {memos.map((m) => <button key={m} onClick={() => setMemo(m)} style={{ border: memo === m ? `2px solid ${C.plum}` : "2px solid #EDECF5", background: memo === m ? C.sky : "#fff", color: C.plum, borderRadius: 999, padding: "7px 14px", fontWeight: 700, cursor: "pointer", fontSize: 13 }}><T s={m} /></button>)}
@@ -643,7 +782,7 @@ function GoalSheet({ current, onClose, onSave, onClear }) {
     <PanelLabel><T s="いくら [貯|た]める？" /></PanelLabel>
     <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "center", marginBottom: 18 }}>
       <StepBtn onClick={() => setAmount((a) => Math.max(0, a - 500))}><Minus size={20} /></StepBtn>
-      <div style={{ fontFamily: "'Baloo 2',sans-serif", fontWeight: 800, fontSize: 30, color: C.plum, width: 130, textAlign: "center" }}>{yen(amount)}</div>
+      <div style={{ fontFamily: "'M PLUS Rounded 1c',sans-serif", fontWeight: 800, fontSize: 30, color: C.plum, width: 130, textAlign: "center" }}>{yen(amount)}</div>
       <StepBtn onClick={() => setAmount((a) => a + 500)}><Plus size={20} /></StepBtn>
     </div>
     <button onClick={() => onSave({ purpose: purpose.trim() || "ほしいもの", amount })} disabled={amount <= 0} style={{ width: "100%", border: "none", borderRadius: 16, padding: 15, fontFamily: "'Zen Maru Gothic',sans-serif", fontWeight: 700, fontSize: 17, color: "#fff", background: amount <= 0 ? "#C7C2DB" : C.coral, cursor: amount <= 0 ? "default" : "pointer" }}><T s="[決|き]める" /></button>
@@ -665,7 +804,7 @@ function PinPad({ mode, expect, onClose, onDone }) {
       <div style={{ display: "flex", gap: 12, justifyContent: "center", margin: "18px 0" }}>{[0, 1, 2, 3].map((i) => <div key={i} style={{ width: 16, height: 16, borderRadius: "50%", background: i < buf.length ? C.plum : "#E4E2F0", transition: "background .15s" }} />)}</div>
       {err && <div style={{ color: C.coralDark, fontWeight: 700, fontSize: 13, marginBottom: 10 }}><T s="ちがうよ。もう[一回|いっかい]" /></div>}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, maxWidth: 260, margin: "0 auto" }}>
-        {keys.map((k, i) => k === "" ? <div key={i} /> : <button key={i} onClick={() => (k === "del" ? setBuf((b) => b.slice(0, -1)) : push(k))} style={{ height: 58, borderRadius: 16, border: "none", background: k === "del" ? "transparent" : "#F4F3FA", color: C.plum, fontFamily: "'Baloo 2',sans-serif", fontWeight: 800, fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{k === "del" ? <Delete size={22} /> : k}</button>)}
+        {keys.map((k, i) => k === "" ? <div key={i} /> : <button key={i} onClick={() => (k === "del" ? setBuf((b) => b.slice(0, -1)) : push(k))} style={{ height: 58, borderRadius: 16, border: "none", background: k === "del" ? "transparent" : "#F4F3FA", color: C.plum, fontFamily: "'M PLUS Rounded 1c',sans-serif", fontWeight: 800, fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{k === "del" ? <Delete size={22} /> : k}</button>)}
       </div>
     </div>
   </Backdrop>;
