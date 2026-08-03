@@ -79,12 +79,11 @@ const matchFilter = (type, f) =>
       : f === "earn" ? ["interest", "animal"].includes(type)
         : f === "withdraw" ? type === "withdraw" : true;
 const AFFILIATE = [
-  { emoji: "📚", title: "お金の絵本・ドリル", desc: "お金の基本が学べる本", url: "" },
-  { emoji: "🎲", title: "お金のボードゲーム", desc: "人生ゲーム・モノポリー など", url: "" },
-  { emoji: "💳", title: "子ども用プリペイドカード", desc: "セブン銀行 money ring など", url: "" },
-  { emoji: "🎓", title: "金融教育のオンライン講座", desc: "親子で一緒に", url: "" },
+  { emoji: "📚", title: "お金の絵本・ドリル", desc: "お金の基本が学べる本", url: "https://hb.afl.rakuten.co.jp/ichiba/55ff8d63.14cf419b.55ff8d65.1914e1e3/?pc=https%3A%2F%2Fitem.rakuten.co.jp%2Fbook%2F18601863%2F&link_type=picttext&ut=eyJwYWdlIjoiaXRlbSIsInR5cGUiOiJwaWN0dGV4dCIsInNpemUiOiIyNDB4MjQwIiwibmFtIjoxLCJuYW1wIjoicmlnaHQiLCJjb20iOjEsImNvbXAiOiJkb3duIiwicHJpY2UiOjEsImJvciI6MSwiY29sIjoxLCJiYnRuIjoxLCJwcm9kIjowLCJhbXAiOmZhbHNlfQ%3D%3D" },
+  { emoji: "🎲", title: "お金のボードゲーム", desc: "遊びながらお金の感覚を身につける", url: "https://hb.afl.rakuten.co.jp/ichiba/5620692c.d4bdb46b.5620692d.e5580094/?pc=https%3A%2F%2Fitem.rakuten.co.jp%2Fboardgame-album%2F014-4578%2F&link_type=picttext&ut=eyJwYWdlIjoiaXRlbSIsInR5cGUiOiJwaWN0dGV4dCIsInNpemUiOiIyNDB4MjQwIiwibmFtIjoxLCJuYW1wIjoicmlnaHQiLCJjb20iOjEsImNvbXAiOiJkb3duIiwicHJpY2UiOjEsImJvciI6MSwiY29sIjoxLCJiYnRuIjoxLCJwcm9kIjowLCJhbXAiOmZhbHNlfQ%3D%3D" },
+  { emoji: "💳", title: "子ども用プリペイドカード", desc: "ワンバンク（旧B/43）ジュニアカード／使う練習に", url: "https://onebank.jp/card/junior/#download" },
   // こどもNISAは2027年開始予定。現時点で開設できるのは「未成年口座（課税）」です。
-  { emoji: "📈", title: "子ども名義の証券口座", desc: "楽天証券・SBI証券／こどもNISAは2027年開始予定", url: "" },
+  { emoji: "📈", title: "子ども名義の証券口座", desc: "楽天証券・SBI証券／こどもNISAは2027年開始予定", url: "https://www.rakuten-sec.co.jp/" },
 ];
 
 // ---- pure weekly simulation (real-time catch-up) ----
@@ -483,10 +482,21 @@ export default function App() {
                   <div style={{ fontWeight: 700, fontSize: 13.5 }}>{a.title}</div>
                   <div style={{ fontSize: 11, color: C.plumSoft, fontWeight: 700 }}>{a.desc}</div>
                 </div>
-                <a href={a.url || "#"} target="_blank" rel="noopener sponsored nofollow" style={{ textDecoration: "none", background: C.violet + "1A", color: C.violet, fontWeight: 700, fontSize: 12, borderRadius: 10, padding: "7px 12px", flexShrink: 0 }}>みる</a>
+                <a href={a.url || undefined} target="_blank" rel="noopener sponsored" onClick={(e) => {
+                  if (!a.url) { e.preventDefault(); return; }
+                  const standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+                  if (standalone) { e.preventDefault(); window.open(a.url, "_blank"); }
+                }} style={{ textDecoration: "none", background: a.url ? C.violet + "1A" : "#EEE", color: a.url ? C.violet : "#AAA", fontWeight: 700, fontSize: 12, borderRadius: 10, padding: "7px 12px", flexShrink: 0, cursor: a.url ? "pointer" : "default", pointerEvents: a.url ? "auto" : "none" }}>みる</a>
               </div>
             ))}
-            <div style={{ fontSize: 10.5, color: C.plumSoft, fontWeight: 700, marginBottom: 6 }}>※ 親向けのおすすめリンク（アフィリエイト）</div>
+            <div style={{ fontSize: 10.5, color: C.plumSoft, fontWeight: 500, marginBottom: 6, lineHeight: 1.7 }}>※ 保護者の方向けのリンクです。一部にアフィリエイト広告を含みます。</div>
+
+            <button onClick={() => setParentUnlocked(false)} style={{ width: "100%", border: "none", borderRadius: 16, padding: 15, marginTop: 16, background: `linear-gradient(180deg,${C.green},${C.greenDark})`, color: "#fff", fontFamily: "'Zen Maru Gothic',sans-serif", fontWeight: 700, fontSize: 16, cursor: "pointer", boxShadow: "0 8px 18px rgba(21,154,93,.30)", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+              <PiggyBank size={19} />設定を終わって、子どもの画面へ
+            </button>
+            <div style={{ fontSize: 10.5, color: C.plumSoft, fontWeight: 700, textAlign: "center", marginTop: 8 }}>
+              設定は自動で保存されます。右上の「親」からいつでも変更できます。
+            </div>
 
           </div>
         )}
